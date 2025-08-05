@@ -7,6 +7,8 @@ pub struct TokenInfoWhitelistOps<'info> {
     #[account(
         mut,
         has_one = token_creator,
+        seeds = [b"token-info", token_info.token_mint.as_ref()],
+        bump = token_info.bump
     )]
     pub token_info: Account<'info, TokenInfo>,
 

@@ -26,7 +26,7 @@ pub struct InitializeExtraAccountMetaList<'info> {
     pub extra_account_meta_list: AccountInfo<'info>,
     #[account(
         init_if_needed,
-        seeds = [b"token-info", payer.key().as_ref()],
+        seeds = [b"token-info", mint.key().as_ref()],
         bump,
         space = TokenInfo::INIT_SPACE,
         payer = payer

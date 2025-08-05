@@ -5,7 +5,12 @@ use crate::state::{CustomError, TokenInfo};
 
 #[derive(Accounts)]
 pub struct UpdateTokenExtension<'info> {
-    #[account(mut, has_one = token_creator)]
+    #[account(
+        mut, 
+        has_one = token_creator,
+        seeds = [b"token-info", token_info.token_mint.as_ref()],
+        bump = token_info.bump
+    )]
     pub token_info: Account<'info, TokenInfo>,
     pub token_creator: Signer<'info>,
 }

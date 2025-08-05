@@ -52,8 +52,11 @@ describe("amm_with_transfer_hook", () => {
     [Buffer.from('extra-account-metas'), mint2022.publicKey.toBuffer()],
     program.programId,
   );
-  let tokenInfoPda: PublicKey;
-  
+  const tokenInfoPda = anchor.web3.PublicKey.findProgramAddressSync(
+    [Buffer.from('token-info'), mint2022.publicKey.toBuffer()],
+    program.programId,
+  )[0];
+
   it("Create a new token mint", async() => {
     mint = await createMint(
       provider.connection,
@@ -101,12 +104,35 @@ describe("amm_with_transfer_hook", () => {
     console.log("\nTransaction Signature: ", txSig);
   });
 
+  it("Initialize extra account meta list and token info", async () => {
+    const tx = await program.methods
+      .initializeTokenInfo(
+        "Test Token", // token_name
+        "TEST", // token_symbol
+        new anchor.BN(1000000), // token_total_supply
+        true, // is_whale_enabled
+        true, // is_whitelist_enabled
+        true, // is_total_transfer_amount_enabled
+        new anchor.BN(10000), // whale_amount
+        new anchor.BN(50000) // total_transfer_amount
+      )
+      .accounts({
+        mint: mint2022.publicKey,
+        payer: wallet.publicKey,
+      })
+      .signers([wallet.payer])
+      .rpc();
+
+    console.log("Initialized token info:", tx);
+  });
+
   it("Adds address to whitelist", async () => {
     const tx = await program.methods
       .addToWhitelist(recipient.publicKey)
       .accounts({
         tokenInfo: tokenInfoPda,
       })
+      .signers([wallet.payer])
       .rpc();
 
     console.log("Added to whitelist:", tx);
@@ -118,6 +144,7 @@ describe("amm_with_transfer_hook", () => {
       .accounts({
         tokenInfo: tokenInfoPda,
       })
+      .signers([wallet.payer])
       .rpc();
 
     console.log("Whale alert updated:", tx);
@@ -129,6 +156,7 @@ describe("amm_with_transfer_hook", () => {
       .accounts({
         tokenInfo: tokenInfoPda,
       })
+      .signers([wallet.payer])
       .rpc();
 
     console.log("Max transfer limit updated:", tx);
@@ -146,6 +174,7 @@ describe("amm_with_transfer_hook", () => {
           owner: nonWhitelisted.publicKey,
           mint: mint2022.publicKey,
         })
+        .signers([wallet.payer])
         .rpc();
       assert.fail("Expected error for non-whitelisted transfer");
     } catch (err) {
