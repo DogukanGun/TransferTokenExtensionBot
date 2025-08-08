@@ -111,7 +111,19 @@ export default function Dashboard() {
       const initialPrice = ammType === 'custom' ? 
         parseFloat(prompt('Enter initial price (e.g., 1.0):', '1.0') || '1.0') : 1.0;
 
+      // Validate pool creation parameters
       const ammService = new AmmService(connection);
+      const validation = await ammService.validatePoolCreation(
+        ammType as 'orca' | 'meteora' | 'custom',
+        mint,
+        initialPrice
+      );
+
+      if (!validation.isValid) {
+        alert(`Pool creation validation failed:\n${validation.errors.join('\n')}`);
+        return;
+      }
+
       const result = await ammService.createPool(
         ammType as 'orca' | 'meteora' | 'custom',
         mint,
@@ -129,7 +141,7 @@ export default function Dashboard() {
       alert(`Pool created successfully!\nPool Address: ${result.poolAddress}\n\n${result.message}`);
     } catch (error) {
       console.error('Error creating pool:', error);
-      alert('Failed to create pool. Please try again.');
+      alert(`Failed to create pool: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setIsCreatingPool(false);
     }
@@ -153,8 +165,9 @@ export default function Dashboard() {
         setActiveFeatures([...activeFeatures, draggedItem]);
       }
     } else {
+      // For connections, only allow one connector at a time
       if (!activeConnections.includes(draggedItem)) {
-        setActiveConnections([...activeConnections, draggedItem]);
+        setActiveConnections([draggedItem]); // Replace instead of append
       }
     }
     setDraggedItem(null);
@@ -174,6 +187,42 @@ export default function Dashboard() {
 
     setIsDeploying(true);
     try {
+      // Validate token metadata and features before deployment
+      const tokenService = new TokenService(connection);
+      
+      const metadataValidation = await tokenService.validateTokenMetadata(tokenMetadata);
+      if (!metadataValidation.isValid) {
+        alert(`Token metadata validation failed:\n${metadataValidation.errors.join('\n')}`);
+        return;
+      }
+
+      const featureConfig = {
+        whaleAlert: activeFeatures.includes('whale-alert')
+          ? {
+              isEnabled: true,
+              amount: features.find(f => f.id === 'whale-alert')?.config.amount || '1000000'
+            }
+          : undefined,
+        whitelist: activeFeatures.includes('whitelist')
+          ? {
+              isEnabled: true,
+              addresses: []
+            }
+          : undefined,
+        transferLimit: activeFeatures.includes('transfer-limit')
+          ? {
+              isEnabled: true,
+              amount: features.find(f => f.id === 'transfer-limit')?.config.amount || '100000'
+            }
+          : undefined
+      };
+
+      const featureValidation = await tokenService.validateFeatureConfig(featureConfig);
+      if (!featureValidation.isValid) {
+        alert(`Feature configuration validation failed:\n${featureValidation.errors.join('\n')}`);
+        return;
+      }
+
       // Create the token mint
       const mintKeypair = Keypair.generate();
       const lamports = await getMinimumBalanceForRentExemptMint(connection);
@@ -202,46 +251,22 @@ export default function Dashboard() {
       const mintSig = await connection.sendRawTransaction(signedMintTx.serialize());
       await connection.confirmTransaction(mintSig, 'confirmed');
 
-      const tokenService = new TokenService(connection);
-
-      // Prepare feature configuration
-      const featureConfig = {
-        whaleAlert: activeFeatures.includes('whale-alert')
-          ? {
-              isEnabled: true,
-              amount: features.find(f => f.id === 'whale-alert')?.config.amount || '1000000'
-            }
-          : undefined,
-        whitelist: activeFeatures.includes('whitelist')
-          ? {
-              isEnabled: true,
-              addresses: []
-            }
-          : undefined,
-        transferLimit: activeFeatures.includes('transfer-limit')
-          ? {
-              isEnabled: true,
-              amount: features.find(f => f.id === 'transfer-limit')?.config.amount || '100000'
-            }
-          : undefined
-      };
-
       // Create and send transaction
-      const configTx = await tokenService.deployToken(
+      const deploymentResult = await tokenService.deployToken(
         tokenMetadata,
         featureConfig,
         publicKey,
         mintKeypair.publicKey
       );
 
-      configTx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
-      configTx.feePayer = publicKey;
+      deploymentResult.transaction.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+      deploymentResult.transaction.feePayer = publicKey;
       
-      const signedConfigTx = await signTransaction(configTx);
+      const signedConfigTx = await signTransaction(deploymentResult.transaction);
       const configSig = await connection.sendRawTransaction(signedConfigTx.serialize());
       await connection.confirmTransaction(configSig, 'confirmed');
 
-      alert(`Token deployed successfully!\nMint address: ${mintKeypair.publicKey.toBase58()}`);
+      alert(`Token deployed successfully!\nMint address: ${mintKeypair.publicKey.toBase58()}\nToken Info PDA: ${deploymentResult.tokenInfoPDA.toBase58()}`);
 
       // After successful token deployment, create pools for active connections
       if (activeConnections.length > 0) {
@@ -251,7 +276,7 @@ export default function Dashboard() {
       }
     } catch (error) {
       console.error('Error deploying token:', error);
-      alert('Error deploying token. Please try again.');
+      alert(`Error deploying token: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setIsDeploying(false);
     }
@@ -262,9 +287,9 @@ export default function Dashboard() {
     connection,
     tokenMetadata,
     activeFeatures,
-    activeConnections, // Added activeConnections to dependencies
+    activeConnections,
     features,
-    handleCreatePool // Added handleCreatePool to dependencies
+    handleCreatePool
   ]);
 
   return (
@@ -314,12 +339,15 @@ export default function Dashboard() {
 
                 <div className="mt-8">
                   <h2 className="text-xl font-semibold mb-4">Available Connections</h2>
+                  <p className="text-sm text-gray-400 mb-4">Select only one AMM connector for your token</p>
                   <div className="space-y-4">
                     {connections.map(connection => (
                       <div
                         key={connection.id}
                         className={`bg-gray-700/50 p-4 rounded-lg border-2 border-transparent ${
                           connection.disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-move hover:border-purple-500/30'
+                        } ${
+                          activeConnections.includes(connection.id) ? 'border-purple-500 bg-purple-500/10' : ''
                         } transition-colors`}
                         {...(!connection.disabled && {
                           draggable: true,
@@ -415,12 +443,12 @@ export default function Dashboard() {
                       {/* Active Connections */}
                       {activeConnections.length > 0 && (
                         <div className="space-y-4">
-                          <h3 className="text-lg font-medium text-pink-400">Active Connections</h3>
+                          <h3 className="text-lg font-medium text-pink-400">Active Connection (Only one allowed)</h3>
                           {activeConnections.map(id => {
                             const connection = connections.find(c => c.id === id);
                             if (!connection) return null;
                             return (
-                              <div key={id} className="bg-gray-700/50 p-4 rounded-lg">
+                              <div key={id} className="bg-gray-700/50 p-4 rounded-lg border-2 border-pink-500/50">
                                 <div className="flex items-center justify-between">
                                   <div className="flex items-center gap-2">
                                     <span className="text-xl">{connection.icon}</span>

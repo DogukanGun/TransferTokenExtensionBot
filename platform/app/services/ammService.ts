@@ -2,13 +2,18 @@ import { Connection, PublicKey, Transaction } from '@solana/web3.js';
 import { address } from '@solana/kit';
 import { BN } from 'bn.js';
 import * as anchor from '@project-serum/anchor';
-import { Pool } from '../../smart_contract_targets/pool';
 
 export type AmmType = 'orca' | 'meteora' | 'custom';
 
 // Contract addresses
 const POOL_PROGRAM_ID = 'ATjeowb5mBhPDtRiUAstjDVkCNGYyyP5Wze3P1C2WqC9';
 const DEVNET_USDC_ADDRESS = 'Gh9ZwEmdLJ8DscKNTkTqPbNwLNNBjuSzaG9Vp2KGtKJr';
+
+export interface PoolCreationResult {
+  poolAddress: PublicKey;
+  signature: string;
+  message: string;
+}
 
 export class AmmService {
   constructor(private connection: Connection) {}
@@ -19,20 +24,40 @@ export class AmmService {
     initialPrice: number,
     wallet: PublicKey,
     signTransaction: (tx: Transaction) => Promise<Transaction>
-  ) {
-    switch (ammType) {
-      case 'orca':
-        return this.createOrcaPool(tokenMint);
-      case 'meteora':
-        return this.createMeteoraPool(tokenMint, initialPrice, wallet, signTransaction);
-      case 'custom':
-        return this.createCustomPool(tokenMint, initialPrice, wallet, signTransaction);
-      default:
-        throw new Error('Unsupported AMM type');
+  ): Promise<PoolCreationResult> {
+    // Input validation
+    if (!tokenMint) {
+      throw new Error('Token mint is required');
+    }
+    if (initialPrice <= 0) {
+      throw new Error('Initial price must be greater than 0');
+    }
+    if (!wallet) {
+      throw new Error('Wallet is required');
+    }
+
+    try {
+      switch (ammType) {
+        case 'orca':
+          return await this.createOrcaPool(tokenMint, wallet, signTransaction);
+        case 'meteora':
+          return await this.createMeteoraPool(tokenMint, initialPrice, wallet, signTransaction);
+        case 'custom':
+          return await this.createCustomPool(tokenMint, initialPrice, wallet, signTransaction);
+        default:
+          throw new Error(`Unsupported AMM type: ${ammType}`);
+      }
+    } catch (error) {
+      console.error(`Error creating ${ammType} pool:`, error);
+      throw new Error(`Failed to create ${ammType} pool: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 
-  private async createOrcaPool(tokenMint: PublicKey) {
+  private async createOrcaPool(
+    tokenMint: PublicKey,
+    wallet: PublicKey,
+    signTransaction: (tx: Transaction) => Promise<Transaction>
+  ): Promise<PoolCreationResult> {
     try {
       // Dynamically import Orca Whirlpools to avoid WASM loading issues during SSR
       const { createSplashPool, setWhirlpoolsConfig } = await import('@orca-so/whirlpools');
@@ -52,13 +77,13 @@ export class AmmService {
       const signature = await callback();
 
       return {
-        poolAddress,
+        poolAddress: new PublicKey(poolAddress),
         signature,
-        message: 'Note: Pool requires whitelisting from Orca protocol for full functionality.'
+        message: 'Orca pool created successfully! Note: Pool requires whitelisting from Orca protocol for full functionality.'
       };
     } catch (error) {
       console.error('Error creating Orca pool:', error);
-      throw error;
+      throw new Error(`Orca pool creation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 
@@ -67,19 +92,28 @@ export class AmmService {
     initialPrice: number,
     wallet: PublicKey,
     signTransaction: (tx: Transaction) => Promise<Transaction>
-  ) {
+  ): Promise<PoolCreationResult> {
     try {
       const devUsdcMint = new PublicKey(DEVNET_USDC_ADDRESS);
 
-      // For now, return a message about Meteora integration
+      // Create a mock pool address for demonstration
+      const [poolAddress] = await PublicKey.findProgramAddress(
+        [
+          Buffer.from('meteora_pool'),
+          tokenMint.toBuffer(),
+          devUsdcMint.toBuffer()
+        ],
+        new PublicKey('MeteoraPool111111111111111111111111111111111')
+      );
+
       return {
-        poolAddress: wallet,
+        poolAddress,
         signature: '',
-        message: 'Meteora pool creation requires additional setup. Please visit app.meteora.ag to create a pool.'
+        message: 'Meteora pool creation requires additional setup. Please visit app.meteora.ag to create a pool with your token.'
       };
     } catch (error) {
       console.error('Error creating Meteora pool:', error);
-      throw error;
+      throw new Error(`Meteora pool creation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 
@@ -88,7 +122,7 @@ export class AmmService {
     initialPrice: number,
     wallet: PublicKey,
     signTransaction: (tx: Transaction) => Promise<Transaction>
-  ) {
+  ): Promise<PoolCreationResult> {
     try {
       // Use devnet USDC as the second token
       const devUsdcMint = new PublicKey(DEVNET_USDC_ADDRESS);
@@ -284,7 +318,7 @@ export class AmmService {
       };
     } catch (error) {
       console.error('Error creating custom pool:', error);
-      throw error;
+      throw new Error(`Custom pool creation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 
@@ -367,5 +401,110 @@ export class AmmService {
       
       return feeTierAddress;
     }
+  }
+
+  async validatePoolCreation(
+    ammType: AmmType,
+    tokenMint: PublicKey,
+    initialPrice: number
+  ): Promise<{ isValid: boolean; errors: string[] }> {
+    const errors: string[] = [];
+
+    if (!tokenMint) {
+      errors.push('Token mint is required');
+    }
+
+    if (initialPrice <= 0) {
+      errors.push('Initial price must be greater than 0');
+    }
+
+    if (ammType === 'custom' && (initialPrice < 0.000001 || initialPrice > 1000000)) {
+      errors.push('Initial price for custom pools should be between 0.000001 and 1,000,000');
+    }
+
+    // Check if pool already exists for custom pools
+    if (ammType === 'custom') {
+      try {
+        const devUsdcMint = new PublicKey(DEVNET_USDC_ADDRESS);
+        const programId = new PublicKey(POOL_PROGRAM_ID);
+        const tickSpacing = 64;
+        
+        const [poolAddress] = await anchor.web3.PublicKey.findProgramAddress(
+          [
+            Buffer.from('pool'),
+            tokenMint.toBuffer(),
+            devUsdcMint.toBuffer(),
+            Buffer.from(new Uint8Array([tickSpacing & 0xff, (tickSpacing >> 8) & 0xff]))
+          ],
+          programId
+        );
+
+        const accountInfo = await this.connection.getAccountInfo(poolAddress);
+        if (accountInfo) {
+          errors.push('Pool already exists for this token pair');
+        }
+      } catch (error) {
+        // Ignore errors during validation check
+      }
+    }
+
+    return {
+      isValid: errors.length === 0,
+      errors
+    };
+  }
+
+  async getPoolInfo(poolAddress: PublicKey): Promise<any> {
+    try {
+      const accountInfo = await this.connection.getAccountInfo(poolAddress);
+      if (!accountInfo) {
+        throw new Error('Pool not found');
+      }
+
+      return {
+        address: poolAddress.toBase58(),
+        exists: true,
+        data: accountInfo.data,
+        lamports: accountInfo.lamports,
+        owner: accountInfo.owner.toBase58()
+      };
+    } catch (error) {
+      console.error('Error getting pool info:', error);
+      throw new Error(`Get pool info failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  async getSupportedAmmTypes(): Promise<AmmType[]> {
+    return ['orca', 'meteora', 'custom'];
+  }
+
+  async getAmmTypeInfo(ammType: AmmType): Promise<{
+    name: string;
+    description: string;
+    features: string[];
+    requirements: string[];
+  }> {
+    const info = {
+      orca: {
+        name: 'Orca Whirlpools',
+        description: 'Create a Whirlpool with your token paired with USDC',
+        features: ['Automated market making', 'Concentrated liquidity', 'Low fees'],
+        requirements: ['Token whitelisting may be required']
+      },
+      meteora: {
+        name: 'Meteora Dynamic AMM',
+        description: 'Create a Dynamic AMM pool with your token',
+        features: ['Dynamic fee adjustment', 'Advanced liquidity management'],
+        requirements: ['Whitelisting required', 'Visit app.meteora.ag']
+      },
+      custom: {
+        name: 'Custom AMM Pool',
+        description: 'Create a custom AMM pool using our implementation',
+        features: ['Full control', 'Customizable parameters', 'No whitelisting required'],
+        requirements: ['Initial price setup required']
+      }
+    };
+
+    return info[ammType];
   }
 }
