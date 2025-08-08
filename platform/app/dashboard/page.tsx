@@ -59,6 +59,13 @@ const connections = [
     icon: '☄️',
     disabled: false,
     requiresWhitelist: true
+  },
+  {
+    id: 'custom',
+    title: 'Custom AMM Pool',
+    description: 'Create pool using our own AMM implementation',
+    icon: '🔄',
+    disabled: false
   }
 ];
 
@@ -101,11 +108,14 @@ export default function Dashboard() {
 
     setIsCreatingPool(true);
     try {
+      const initialPrice = ammType === 'custom' ? 
+        parseFloat(prompt('Enter initial price (e.g., 1.0):', '1.0') || '1.0') : 1.0;
+
       const ammService = new AmmService(connection);
       const result = await ammService.createPool(
-        ammType as 'orca' | 'meteora',
+        ammType as 'orca' | 'meteora' | 'custom',
         mint,
-        1.0, // Initial price, you might want to make this configurable
+        initialPrice,
         publicKey,
         async (tx: Transaction) => signTransaction(tx) as Promise<Transaction>
       );
@@ -127,6 +137,12 @@ export default function Dashboard() {
 
   const handleDragStart = (id: string) => {
     setDraggedItem(id);
+  };
+
+  // Helper function to format address for display
+  const formatAddress = (address: string) => {
+    if (!address) return '';
+    return `${address.substring(0, 6)}...${address.substring(address.length - 4)}`;
   };
 
   const handleDrop = (type: 'features' | 'connections') => {
@@ -315,6 +331,12 @@ export default function Dashboard() {
                           <div>
                             <h3 className="font-medium">{connection.title}</h3>
                             <p className="text-sm text-gray-400">{connection.description}</p>
+                            {isCreatingPool && activeConnections.includes(connection.id) && (
+                              <div className="mt-1 flex items-center gap-2">
+                                <div className="animate-spin h-4 w-4 border-2 border-purple-500 border-t-transparent rounded-full"></div>
+                                <span className="text-xs text-purple-400">Creating pool...</span>
+                              </div>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -485,6 +507,40 @@ export default function Dashboard() {
               {!connected ? 'Connect Wallet to Deploy' : isDeploying ? 'Deploying...' : 'Deploy Token'}
             </button>
           </div>
+
+          {/* Pool Creation Status */}
+          {poolCreationStatus && (
+            <div className="mt-8 bg-gray-800/30 rounded-xl p-6">
+              <h2 className="text-xl font-semibold mb-4">Pool Creation Status</h2>
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-gray-400">AMM Type:</span>
+                  <span className="font-medium">
+                    {poolCreationStatus.ammType === 'orca' && '🌊 Orca'}
+                    {poolCreationStatus.ammType === 'meteora' && '☄️ Meteora'}
+                    {poolCreationStatus.ammType === 'custom' && '🔄 Custom AMM'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-gray-400">Pool Address:</span>
+                  <a 
+                    href={`https://explorer.solana.com/address/${poolCreationStatus.address}?cluster=devnet`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-medium text-blue-400 hover:text-blue-300"
+                  >
+                    {formatAddress(poolCreationStatus.address || '')}
+                  </a>
+                </div>
+                {poolCreationStatus.message && (
+                  <div className="flex items-start gap-2">
+                    <span className="text-gray-400">Message:</span>
+                    <span className="font-medium">{poolCreationStatus.message}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
