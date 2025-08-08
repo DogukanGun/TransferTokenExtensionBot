@@ -1,4 +1,3 @@
-import { createSplashPool, setWhirlpoolsConfig } from '@orca-so/whirlpools';
 import { Connection, PublicKey, Transaction } from '@solana/web3.js';
 import { address } from '@solana/kit';
 import { BN } from 'bn.js';
@@ -35,6 +34,9 @@ export class AmmService {
 
   private async createOrcaPool(tokenMint: PublicKey) {
     try {
+      // Dynamically import Orca Whirlpools to avoid WASM loading issues during SSR
+      const { createSplashPool, setWhirlpoolsConfig } = await import('@orca-so/whirlpools');
+      
       // Configure Orca SDK for devnet
       await setWhirlpoolsConfig('solanaDevnet');
 
