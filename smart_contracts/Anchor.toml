@@ -8,11 +8,15 @@ skip-lint = false
 [programs.localnet]
 amm_with_transfer_hook = "F4RupoT7DMW6dDbkzoyG3R3LndyW9EJEeBp4FvMu9v56"
 
+[programs.devnet]
+amm_with_transfer_hook = "F4RupoT7DMW6dDbkzoyG3R3LndyW9EJEeBp4FvMu9v56"
+
+
 [registry]
 url = "https://api.apr.dev"
 
 [provider]
-cluster = "localnet"
+cluster = "devnet"
 wallet = "~/.config/solana/id.json"
 
 [scripts]

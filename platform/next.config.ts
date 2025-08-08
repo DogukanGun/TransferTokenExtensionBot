@@ -25,16 +25,7 @@ const nextConfig: NextConfig = {
       }
     }
     
-    // Handle WASM files specifically
-    config.resolve.alias = {
-      ...config.resolve.alias,
-    }
-    
     return config
-  },
-  // Disable static optimization for pages that use WASM
-  experimental: {
-    esmExternals: 'loose',
   }
 };
 
